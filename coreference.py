@@ -9,6 +9,7 @@
 from spacy.en import English
 import sys
 import xml.etree.ElementTree as ET
+import os
 
 new_id_count = 1
 nlp = English()
@@ -17,6 +18,8 @@ nlp = English()
 def main(argv):
     list_file_path = argv[0]
     output_directory_path = argv[1]
+    if output_directory_path[-1] != '/':
+        output_directory_path += '/'
 
     files_to_process = list()
     with open(list_file_path, 'rb') as listfile:
@@ -26,6 +29,12 @@ def main(argv):
     for file_name in files_to_process:
         corefs = []
         noun_chunks = []
+
+        if os.path.isfile(file_name):
+            print 'Processing', file_name
+        else:
+            print file_name, 'could not be found. Continuing to next file.'
+            continue
 
         tree = ET.parse(file_name)
         root = tree.getroot()
@@ -49,18 +58,23 @@ def main(argv):
                     corefs_to_keep.append(coref.ref)
                 corefs_to_keep.append(coref.coref_id)
 
+        if not os.path.exists(output_directory_path):
+            os.makedirs(output_directory_path)
+
         output_filename = output_directory_path + file_name.split('/')[-1].replace('.crf', '.response')
         with open(output_filename, 'w+') as output_file:
-            print '<TXT>'
+            output_file.write('<TXT>\n')
 
             for coref in corefs:
                 if coref.coref_id in corefs_to_keep:
                     if not coref.ref:
-                        print '<COREF ID="%s">%s</COREF>' % (coref.coref_id, coref.text)
+                        output_file.write('<COREF ID="%s">%s</COREF>\n' % (coref.coref_id, coref.text))
                     else:
-                        print '<COREF ID="%s" REF="%s">%s</COREF>' % (coref.coref_id, coref.ref, coref.text)
+                        output_file.write('<COREF ID="%s" REF="%s">%s</COREF>\n' % (coref.coref_id, coref.ref, coref.text))
 
-            print '</TXT>'
+            output_file.write('</TXT>\n')
+
+    print 'Done. Output files in ' + output_directory_path + '.'
 
 
 # Finds noun chunks in a text block and returns them as a list
@@ -76,18 +90,44 @@ def resolve_coreference(corefs, noun_chunks, coref_obj):
     global new_id_count
 
     for coref in corefs:
-        if coref.text == coref_obj.text:
+        if analyze_corefs(coref_obj.text, coref.text):
             coref_obj.ref = coref.coref_id
             return
 
     for nc in noun_chunks:
-        if nc == coref_obj.text:
+        if analyze_texts(coref_obj.text, nc):
             corefs.append(Coref('X%d' % (new_id_count), nc))
             new_id_count += 1
             noun_chunks.remove(nc)
             return
 
-    print 'You failed'
+
+def analyze_corefs(coref, previous_coref):
+    return analyze_texts(coref, previous_coref)
+
+
+def analyze_texts(coref, noun_chunk):
+    # Exact match
+    if coref == noun_chunk:
+        return True
+
+    # Capitals
+    c_uppers = ''.join([c for c in coref if c.isupper()])
+    nc_uppers = ''.join([c for c in noun_chunk if c.isupper()])
+    if len(c_uppers) > 2 and c_uppers == nc_uppers:
+        return True
+
+    coref_arr = coref.split()
+    noun_chunk_arr = noun_chunk.split()
+    closed_class = ['the', 'a', 'an', 'and', 'but', 'or', 'because', 'when', 'if', 'this', 'that', 'these', 'to', 'for',
+                'with', 'between', 'at', 'of', 'some', 'every', 'most', 'any', 'both']
+    coref_words_without_closed_class = [x.lower() for x in coref_arr if x.lower() not in closed_class]
+    noun_chunks_without_closed_class = [x.lower() for x in noun_chunk_arr if x.lower() not in closed_class]
+
+    # Substringing
+    are_similar = any(i in coref_words_without_closed_class for i in noun_chunks_without_closed_class)
+    if are_similar:
+        return True
 
 
 class Coref:
