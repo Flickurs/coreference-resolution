@@ -1,3 +1,8 @@
 .DS_Store
-*.listfile
 .idea/
+dev/
+output/
+virtual_env/
+*.listfile
+responses.txt
+new2-coref-scorer.py
