@@ -14,6 +14,10 @@ import os
 
 new_id_count = 1
 nlp = English()
+closed_class = ['the', 'a', 'an', 'and', 'but', 'or', 'because', 'when', 'if', 'this', 'that', 'these', 'to', 'for',
+                    'with', 'between', 'at', 'of', 'some', 'every', 'most', 'any', 'both', 'your', 'my', 'mine', 'our',
+                    'ours', 'its', 'his', 'her', 'hers', 'their', 'theirs', 'your', 'yours', 'it', 'he', 'she', 'they',
+                'them', 'those', 'itself', 'himself', 'herself', 'themselves']
 
 
 def main(argv):
@@ -41,30 +45,42 @@ def main(argv):
         tree = ET.parse(file_name)
         root = tree.getroot()
 
-        before_first_tag = root.text
+        before_noun_chunks = root.text
 
-        noun_chunks.extend(find_noun_chunks(before_first_tag))
+        noun_chunks.extend(find_noun_chunks(before_noun_chunks))
 
         for coref in root.findall('COREF'):
             coref_obj = Coref(coref.get('ID'), coref.text)
 
-            resolve_coreference(corefs, noun_chunks, coref_obj)
+            resolve_coreference(corefs, before_noun_chunks, noun_chunks, coref_obj)
 
             corefs.append(coref_obj)
 
             preceding_noun_chunks = find_noun_chunks(coref.tail)
+            before_noun_chunks = preceding_noun_chunks
+
+            # preceding_noun_chunks_to_keep = list()
+            #
+            # for nc in preceding_noun_chunks:
+            #     toKeep = True
+            #     for word in closed_class:
+            #         if word in nc.split():
+            #             toKeep = False
+            #     if toKeep:
+            #         preceding_noun_chunks_to_keep.append(nc)
+
 
             # check for 'it' references
-            for word in preceding_noun_chunks:
-                if word == 'it' or word == 'he' or word == 'she':
-                    ref_id = coref_obj.coref_id
+            # for word in preceding_noun_chunks:
+            #     if word == 'it' or word == 'he' or word == 'she':
+            #         ref_id = coref_obj.coref_id
+            #
+            #         corefs.append(Coref('X%d' % new_id_count, word, ref_id))
+            #         new_id_count += 1
+            #         preceding_noun_chunks.remove(word)
+            #         break
 
-                    corefs.append(Coref('X%d' % new_id_count, word, ref_id))
-                    new_id_count += 1
-                    preceding_noun_chunks.remove(word)
-                    break
-
-            noun_chunks.extend(preceding_noun_chunks)
+            # noun_chunks.extend(preceding_noun_chunks)
 
         corefs_to_keep = []
         for coref in corefs:
@@ -106,8 +122,12 @@ def find_noun_chunks(text_block):
     return noun_chunks
 
 
-def resolve_coreference(corefs, noun_chunks, coref_obj):
+def resolve_coreference(corefs, before_noun_chunks, noun_chunks, coref_obj):
     global new_id_count
+
+    if coref_obj.text in closed_class:
+        coref_obj.ref = corefs[-1].coref_id
+        return
 
     for coref in corefs:
         if analyze_corefs(coref_obj.text, coref.text):
@@ -131,7 +151,7 @@ def analyze_texts(coref, noun_chunk):
     #     return True
 
     # Exact match
-    if coref == noun_chunk:
+    if coref == noun_chunk and coref.lower():
         return True
 
     # Capitals
@@ -142,25 +162,29 @@ def analyze_texts(coref, noun_chunk):
 
     coref_arr = coref.split()
     noun_chunk_arr = noun_chunk.split()
-    closed_class = ['the', 'a', 'an', 'and', 'but', 'or', 'because', 'when', 'if', 'this', 'that', 'these', 'to', 'for',
-                'with', 'between', 'at', 'of', 'some', 'every', 'most', 'any', 'both', 'your', 'my', 'mine', 'our', 'ours', 'its', 'his', 'her', 'hers', 'their', 'theirs', 'your', 'yours']
     coref_words_without_closed_class = [x.lower() for x in coref_arr if x.lower() not in closed_class]
     noun_chunks_without_closed_class = [x.lower() for x in noun_chunk_arr if x.lower() not in closed_class]
 
     # Substringing
-    if len(coref_words_without_closed_class) == 0:
+    if len(coref_words_without_closed_class) == 0 or len(noun_chunks_without_closed_class) == 0:
         return
 
-    similarity_count = 0.0
-    for i in coref_words_without_closed_class:
-        for j in noun_chunks_without_closed_class:
-            if i == j:
-                similarity_count += 1.0
-
-    percentage_similar = similarity_count / float(len(coref_words_without_closed_class))
-
-    if percentage_similar >= 0.01:
+    if coref_words_without_closed_class[-1] == noun_chunks_without_closed_class[-1]:
         return True
+
+    # similarity_count = 0.0
+    # for i in coref_words_without_closed_class:
+    #     for j in noun_chunks_without_closed_class:
+    #         if i == j and i.lower():
+    #             similarity_count += 1.0
+
+    # if similarity_count > 1:
+    #     return True
+
+    # percentage_similar = similarity_count / float(len(coref_words_without_closed_class))
+    #
+    # if percentage_similar >= 0.10:
+    #     return True
 
 
 class Coref:
