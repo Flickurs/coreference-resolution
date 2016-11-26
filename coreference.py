@@ -15,8 +15,8 @@ import os
 new_id_count = 1
 nlp = English()
 closed_class = ['the', 'a', 'an', 'and', 'but', 'or', 'because', 'when', 'if', 'this', 'that', 'these', 'to', 'for',
-                    'with', 'between', 'at', 'of', 'some', 'every', 'most', 'any', 'both', 'your', 'my', 'mine', 'our',
-                    'ours', 'its', 'his', 'her', 'hers', 'their', 'theirs', 'your', 'yours', 'it', 'he', 'she', 'they',
+                'with', 'between', 'at', 'of', 'some', 'every', 'most', 'any', 'both', 'your', 'my', 'mine', 'our',
+                'ours', 'its', 'his', 'her', 'hers', 'their', 'theirs', 'your', 'yours', 'it', 'he', 'she', 'they',
                 'them', 'those', 'itself', 'himself', 'herself', 'themselves']
 
 
@@ -45,42 +45,19 @@ def main(argv):
         tree = ET.parse(file_name)
         root = tree.getroot()
 
-        before_noun_chunks = root.text
-
-        noun_chunks.extend(find_noun_chunks(before_noun_chunks))
+        preceding_noun_chunks, other_words = find_noun_chunks(root.text)
 
         for coref in root.findall('COREF'):
             coref_obj = Coref(coref.get('ID'), coref.text)
 
-            resolve_coreference(corefs, before_noun_chunks, noun_chunks, coref_obj)
+            resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words)
 
             corefs.append(coref_obj)
 
-            preceding_noun_chunks = find_noun_chunks(coref.tail)
-            before_noun_chunks = preceding_noun_chunks
-
-            # preceding_noun_chunks_to_keep = list()
-            #
-            # for nc in preceding_noun_chunks:
-            #     toKeep = True
-            #     for word in closed_class:
-            #         if word in nc.split():
-            #             toKeep = False
-            #     if toKeep:
-            #         preceding_noun_chunks_to_keep.append(nc)
-
-
-            # check for 'it' references
-            # for word in preceding_noun_chunks:
-            #     if word == 'it' or word == 'he' or word == 'she':
-            #         ref_id = coref_obj.coref_id
-            #
-            #         corefs.append(Coref('X%d' % new_id_count, word, ref_id))
-            #         new_id_count += 1
-            #         preceding_noun_chunks.remove(word)
-            #         break
-
-            # noun_chunks.extend(preceding_noun_chunks)
+            noun_chunks.extend(preceding_noun_chunks)
+            next_preceding_noun_chunks, next_other_words = find_noun_chunks(coref.tail)
+            preceding_noun_chunks = next_preceding_noun_chunks
+            other_words.extend(next_other_words)
 
         corefs_to_keep = []
         for coref in corefs:
@@ -116,16 +93,24 @@ def is_plural(word):
 # Finds noun chunks in a text block and returns them as a list
 def find_noun_chunks(text_block):
     noun_chunks = list()
+    other_words = list()
     doc = nlp(unicode(text_block.strip(), 'utf-8'))
     for np in doc.noun_chunks:
         noun_chunks.append(np.text)
-    return noun_chunks
+    for token in doc:
+        other_words.append(token.string.strip())
+    return noun_chunks, other_words
 
 
-def resolve_coreference(corefs, before_noun_chunks, noun_chunks, coref_obj):
+def resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words):
     global new_id_count
 
-    if coref_obj.text in closed_class:
+    if coref_obj.text in closed_class and len(corefs) > 0:
+        # if preceding_noun_chunks:
+        #     corefs.append(Coref('X%d' % new_id_count, preceding_noun_chunks[-1]))
+        #     new_id_count += 1
+        #     del preceding_noun_chunks[-1]
+
         coref_obj.ref = corefs[-1].coref_id
         return
 
@@ -139,7 +124,28 @@ def resolve_coreference(corefs, before_noun_chunks, noun_chunks, coref_obj):
             corefs.append(Coref('X%d' % new_id_count, nc))
             new_id_count += 1
             noun_chunks.remove(nc)
+            coref_obj.ref = corefs[-1].coref_id
             return
+
+    for nc in preceding_noun_chunks:
+        if analyze_texts(coref_obj.text, nc):
+            corefs.append(Coref('X%d' % new_id_count, nc))
+            new_id_count += 1
+            preceding_noun_chunks.remove(nc)
+            coref_obj.ref = corefs[-1].coref_id
+            return
+
+    for word in other_words:
+        if coref_obj.text.lower() == word.lower():
+            corefs.append(Coref('X%d' % new_id_count, word))
+            new_id_count += 1
+            other_words.remove(word)
+            coref_obj.ref = corefs[-1].coref_id
+            return
+
+    if corefs:
+        coref_obj.ref = corefs[-1].coref_id
+    return
 
 
 def analyze_corefs(coref, previous_coref):
@@ -151,7 +157,7 @@ def analyze_texts(coref, noun_chunk):
     #     return True
 
     # Exact match
-    if coref == noun_chunk and coref.lower():
+    if coref.lower() == noun_chunk.lower():
         return True
 
     # Capitals
@@ -168,6 +174,11 @@ def analyze_texts(coref, noun_chunk):
     # Substringing
     if len(coref_words_without_closed_class) == 0 or len(noun_chunks_without_closed_class) == 0:
         return
+
+    # if type(coref_words_without_closed_class[-1]) is str:
+    #     coref_words_without_closed_class[-1] = unicode(coref_words_without_closed_class[-1], 'utf-8')
+    # if type(noun_chunks_without_closed_class[-1]) is str:
+    #     noun_chunks_without_closed_class[-1] = unicode(noun_chunks_without_closed_class[-1], 'utf-8')
 
     if coref_words_without_closed_class[-1] == noun_chunks_without_closed_class[-1]:
         return True
