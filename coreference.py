@@ -8,7 +8,7 @@
 # imports
 import sys
 from spacy.en import English
-import editdistance
+from dateutil import parser
 import xml.etree.ElementTree as ET
 import os
 
@@ -45,17 +45,20 @@ def main(argv):
         tree = ET.parse(file_name)
         root = tree.getroot()
 
+        split_on_white_space = root.text.strip().split()
         preceding_noun_chunks, other_words = find_noun_chunks(root.text)
 
         for coref in root.findall('COREF'):
-            coref_obj = Coref(coref.get('ID'), coref.text)
+            coref_obj = Coref(coref.get('ID'), coref.text.replace('\n', ' '))
 
-            resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words)
+            resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words,
+                                split_on_white_space, coref.tail[0])
 
             corefs.append(coref_obj)
 
             noun_chunks.extend(preceding_noun_chunks)
             next_preceding_noun_chunks, next_other_words = find_noun_chunks(coref.tail)
+            split_on_white_space.extend(coref.tail.strip().split())
             preceding_noun_chunks = next_preceding_noun_chunks
             other_words.extend(next_other_words)
 
@@ -85,13 +88,9 @@ def main(argv):
     print 'Done. Output files in ' + output_directory_path + '.'
 
 
-# Returns True if word is plural, False otherwise
-def is_plural(word):
-    return False
-
-
 # Finds noun chunks in a text block and returns them as a list
 def find_noun_chunks(text_block):
+    text_block = text_block.replace('\n', ' ')
     noun_chunks = list()
     other_words = list()
     doc = nlp(unicode(text_block.strip(), 'utf-8'))
@@ -102,8 +101,39 @@ def find_noun_chunks(text_block):
     return noun_chunks, other_words
 
 
-def resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words):
+def resolve_coreference(corefs, coref_obj, noun_chunks, preceding_noun_chunks, other_words,
+                        split_on_white_space, first_following_char):
     global new_id_count
+
+    # Date
+    date = get_date(coref_obj.text)
+    if date:
+        for nc in noun_chunks:
+            preceding_date = get_date(nc)
+            if preceding_date and preceding_date.day == date.day and preceding_date.month == date.month:
+                corefs.append(Coref('X%d' % new_id_count, nc))
+                new_id_count += 1
+                noun_chunks.remove(nc)
+                coref_obj.ref = corefs[-1].coref_id
+                return
+
+        for word in split_on_white_space:
+            preceding_date = get_date(word)
+            if preceding_date and preceding_date.day == date.day and preceding_date.month == date.month:
+                corefs.append(Coref('X%d' % new_id_count, word))
+                new_id_count += 1
+                split_on_white_space.remove(word)
+                coref_obj.ref = corefs[-1].coref_id
+                return
+
+    # Appositive
+    if other_words and other_words[-1] == first_following_char and first_following_char == ',':
+        if preceding_noun_chunks:
+            corefs.append(Coref('X%d' % new_id_count, preceding_noun_chunks[-1]))
+            new_id_count += 1
+            del preceding_noun_chunks[-1]
+        coref_obj.ref = corefs[-1].coref_id
+        return
 
     if coref_obj.text in closed_class and len(corefs) > 0:
         # if preceding_noun_chunks:
@@ -175,27 +205,30 @@ def analyze_texts(coref, noun_chunk):
     if len(coref_words_without_closed_class) == 0 or len(noun_chunks_without_closed_class) == 0:
         return
 
-    # if type(coref_words_without_closed_class[-1]) is str:
-    #     coref_words_without_closed_class[-1] = unicode(coref_words_without_closed_class[-1], 'utf-8')
-    # if type(noun_chunks_without_closed_class[-1]) is str:
-    #     noun_chunks_without_closed_class[-1] = unicode(noun_chunks_without_closed_class[-1], 'utf-8')
+    similarity_count = 0.0
+    for i in coref_words_without_closed_class:
+        for j in noun_chunks_without_closed_class:
+            if type(i) is str:
+                i = unicode(i, 'utf-8')
+            if type(j) is str:
+                j = unicode(j, 'utf-8')
 
-    if coref_words_without_closed_class[-1] == noun_chunks_without_closed_class[-1]:
+            if nlp(i.lower())[0].lemma_ == nlp(j.lower())[0].lemma_:
+                similarity_count += 1.0
+
+    if similarity_count > 1:
         return True
 
-    # similarity_count = 0.0
-    # for i in coref_words_without_closed_class:
-    #     for j in noun_chunks_without_closed_class:
-    #         if i == j and i.lower():
-    #             similarity_count += 1.0
+    if coref_words_without_closed_class[-1].lower() == noun_chunks_without_closed_class[-1].lower():
+        return True
 
-    # if similarity_count > 1:
-    #     return True
 
-    # percentage_similar = similarity_count / float(len(coref_words_without_closed_class))
-    #
-    # if percentage_similar >= 0.10:
-    #     return True
+def get_date(string):
+    try:
+        date = parser.parse(string)
+        return date
+    except:
+        return None
 
 
 class Coref:
